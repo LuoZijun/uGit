@@ -4,7 +4,7 @@ import os,sys,time
 
 from django.http import HttpResponse
 
-import git
+
 
 template = """
 <html lang="zh_CN">
@@ -36,7 +36,8 @@ def index(request):
     article = """
         <li><a href="%s">%s</a></li>\n
     """
-    tree = git.Git("/home/luozijun/文档/Git研究/gitm/gitm/blog/.git").tree()
+    #tree = git.Git("/home/luozijun/文档/Git研究/gitm/gitm/blog/.git").tree()
+    tree = []
     articles = ""
     for p in tree:
         if p['type'] == 'blob':

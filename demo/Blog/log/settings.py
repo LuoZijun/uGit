@@ -1,5 +1,5 @@
 """
-Django settings for gitm project.
+Django settings for log project.
 
 For more information on this file, see
 https://docs.djangoproject.com/en/1.6/topics/settings/
@@ -47,9 +47,9 @@ MIDDLEWARE_CLASSES = (
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 )
 
-ROOT_URLCONF = 'gitm.urls'
+ROOT_URLCONF = 'log.urls'
 
-WSGI_APPLICATION = 'gitm.wsgi.application'
+WSGI_APPLICATION = 'log.wsgi.application'
 
 
 # Database
@@ -65,7 +65,7 @@ DATABASES = {
 # Internationalization
 # https://docs.djangoproject.com/en/1.6/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
+LANGUAGE_CODE = 'zh_CN'
 
 TIME_ZONE = 'Asia/Shanghai'
 
