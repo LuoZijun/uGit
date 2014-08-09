@@ -3,7 +3,7 @@
 
 import os,sys,time
 import hashlib,binascii,struct
-import zlib
+import zlib,re
 import stat,shutil
 
 class utils:
@@ -106,6 +106,7 @@ class Tree:
         120000:'blob',                          # blob 对象的符号链接
     }
     """
+
     @staticmethod
     def decode(data):
         "unpack object tree"
@@ -148,6 +149,7 @@ class Tree:
             "struct  [mode, path, sha1]"
             tree.append( '\t'.join( t ) )
         return '\n'.join( tree )
+
 
 class Commit:
     "Commit Object"
@@ -229,6 +231,7 @@ class Commit:
             os.makedirs(path)
         if os.path.isfile(refs) == True:
             return open(refs, 'w').write(sha1 + '\n')
+
 class Refs:
     def __init__(self, workspace):
         self.workspace = os.path.join(workspace, '.git', 'HEAD')
@@ -266,7 +269,7 @@ class Core:
         pass
     def commit(self, comment='default commit message'):
         "向仓库提交操作"
-        tree = Tree.encode(self.commit_tree)
+        tree = Tree.encode(self.tree() + self.commit_tree)
         sha1 = utils.sha1(tree)    # now commit tree sha1
         Object(self.workspace).write(sha1, tree)
         # make commit object
@@ -289,9 +292,20 @@ class Core:
         commit_sha1 = utils.sha1(commit_content)
         Object(self.workspace).write(commit_sha1, commit_content)
         # write commit object sha1 to refs head
-        Commit.write(self.workspace, commit_sha1)
-
-    def diff(path):
+        return Commit.write(self.workspace, commit_sha1)
+    def tree(self):
+        "fetch tree list"
+        commit_content = Object(self.workspace).read( Commit.parent(self.workspace) )
+        tree_sha1 = re.compile(r"\d+\x00tree\s(\S+)\n",re.DOTALL).findall(commit_content)[0]
+        tree_content = Object(self.workspace).read( tree_sha1 )
+        return Tree.decode(tree_content)
+    def blob(self, sha1):
+        "fetch blob object content by blob sha1"
+        try:
+            return Object(self.workspace).read( sha1 )
+        except:
+            return False
+    def diff(self, path):
         "diff one blob file. ( diff tree ? IDK. )"
         """
     unified_diff(a, b, fromfile='', tofile='', fromfiledate='', tofiledate='', n=3, lineterm='\n')
