@@ -227,12 +227,8 @@ class Commit:
         refs = os.path.join(path, os.path.split(HEAD.split(': ')[1])[1])
         if os.path.exists(path) == False:
             os.makedirs(path)
-        print ":: refs %s" %(refs)
         if os.path.isfile(refs) == True:
-            print ":: refs %s \n        sha1: %s" %( refs, sha1 )
             return open(refs, 'w').write(sha1 + '\n')
-        else:
-            print ':: refs not file . ( %s )' %(refs)
 class Refs:
     def __init__(self, workspace):
         self.workspace = os.path.join(workspace, '.git', 'HEAD')
