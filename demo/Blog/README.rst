@@ -19,3 +19,5 @@
     
     python manage.py runserver
     # python manage.py runserver 0.0.0.0:80
+
+然后在浏览器打开地址 http://127.0.0.1:8000/ 。

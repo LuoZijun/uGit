@@ -233,10 +233,11 @@ class Core:
 
     def init(self):
         "初始化仓库"
-        return shutil.copytree( self.__path__ + '/template/.git', self.workspace + '/.git')
+        return shutil.copytree( self.__path__ + '/template/git', os.path.join(self.workspace,'.git') )
     def create(self):
         "创建仓库"
-        return shutil.copytree( self.__path__ + '/template', self.workspace)
+        os.makedirs( os.path.join(self.workspace,'.git') )
+        return shutil.copytree( self.__path__ + '/template/git', os.path.join(self.workspace,'.git'))
     def add(self, path, content, mode=100644):
         "增加文件至提交事务当中"
         sha1 = utils.sha1(content)
