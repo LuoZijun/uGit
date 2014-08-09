@@ -3,8 +3,9 @@
 import os,sys,time
 
 from django.http import HttpResponse
-
-
+import re
+import gitlib
+git = gitlib.Core('log/articles','Luo','Luo','Luo@freeweapon.org')
 
 template = """
 <html lang="zh_CN">
@@ -26,7 +27,9 @@ template = """
 def index(request):
     "首页"
     body = """
-    <h1>It Work!</h1>
+    <h1>My Log</h1>
+    <hr>
+    <br>
         <p><a href="/add">添加文章</a></p>
         <p>文章列表: </p>
         <ul>
@@ -37,16 +40,17 @@ def index(request):
         <li><a href="%s">%s</a></li>\n
     """
     #tree = git.Git("/home/luozijun/文档/Git研究/gitm/gitm/blog/.git").tree()
-    tree = []
+    tree_content = git.tree()
+    tlist = tree_content.split('\n')
     articles = ""
-    for p in tree:
-        if p['type'] == 'blob':
-            articles += article %( '/blog/' + p['path'], p['path'] )
-        else:
-            articles += article %( '/blog/' + p['path'] + '/', p['path'] + '/' )
+    for tree in tlist:
+        t = tree.split('\t')
+        if len(t) > 1:
+            if int(t[0]) == 40000:
+                articles += article %( '/category/' + t[2], t[1] )
+            elif int(t[0]) == 100644:
+                articles += article %( '/articles/' + t[1] + '/' + t[2], t[1] )
     return HttpResponse(template % (body% articles ) )
-
-
 
 def init(request):
     "初始化仓库"
@@ -81,9 +85,23 @@ def category(request, tree):
     tree = tree.encode('utf8')
     return HttpResponse("你要查看的分类是: %s \n<br>\n 目前暂不支持查阅." %(tree))
 
-def articles(request,name):
+def articles(request, title, sha):
     "文章阅读"
-    name = name.encode('utf8')
+    sha = sha.encode('utf8')
+    title = title.encode('utf8')
     
-    return HttpResponse("你要查看的文章是: %s \n<br>\n 目前暂不支持查阅." %(name))
+    content = git.blob(sha)
+    article = """
+    <h1>%s</h1>
+    <div class="content">
+    %s
+    </div>
+    """
+    if content:
+        content = re.compile(r"^blob\s\d+\x00(.*?)$",re.DOTALL).findall(content)[0]
+        article = article %( str(title), str(content))
+        response = template %( article )
+    else:
+        response = "你要查看的文章是: %s \n<br>\n 目前暂不支持查阅." %(name)
+    return HttpResponse(response)
     
