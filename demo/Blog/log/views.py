@@ -10,7 +10,7 @@ git = gitlib.Core('log/articles','Luo','Luo','Luo@freeweapon.org')
 template = """
 <html lang="zh_CN">
     <head>
-        <title>My Blog</title>
+        <title>log</title>
         <meta charset="utf8">
     </head>
     <body>
@@ -27,7 +27,7 @@ template = """
 def index(request):
     "首页"
     body = """
-    <h1>My Log</h1>
+    <h1>Log</h1>
     <hr>
     <br>
         <p><a href="/add">添加文章</a></p>
@@ -71,14 +71,18 @@ def add(request):
     
 def commit(request):
     "向仓库提交内容"
-    title = request.POST['title']
-    content = request.POST['content']
+    title = request.POST['title'].encode('utf8')
+    content = request.POST['content'].encode('utf8')
     #TODO: 阅读 Git索引文件规范 (index)
     """
         1. 创建 tree/blob 对象(得到对象Hash(sha1) )
         2. 在 索引 里面查找 该 对象编号 的信息( 文件名,大小,类型,权限 )
     """
-    return HttpResponse('ok')
+    git.add(title, content)
+    commit_tree = git.commit_tree
+    print git.commit('add one article.')
+    
+    return HttpResponse(commit_tree)
 
 def category(request, tree):
     "目录浏览"
