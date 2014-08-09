@@ -139,7 +139,7 @@ class Tree:
     @staticmethod
     def mktree(mode, path, sha1):
         "make tree object"
-        return '\t'.join( [int(mode), path, sha1] )
+        return '\t'.join( [str(int(mode)), str(path), str(sha1)] )
     @staticmethod
     def maketree(tlist):
         "make tree object from object list"
@@ -185,16 +185,18 @@ class Commit:
     def encode(data):
         "pack commit object data"
         # tree, parent, author, committer, comment
-        head = "commit %d\x00"
+        head = "commit %d\x00%s"
         content = ""
         content += "tree %s\nparent %s\n" %( data['tree'], data['parent'] )
-        content += "author %s\n" %( ' '.join(data['author']) )
-        content += "committer %s\n" %( ' '.join(data['committer']) )
+        #content += "author %s\n" %( ' '.join(data['author']) )
+        content += "author %s\n" %( data['author'] )
+        #content += "committer %s\n" %( ' '.join(data['committer']) )
+        content += "committer %s\n" %( data['committer'] )
         #content += "committer %s\n" %( ' '.join(data['committer']) )
         # TODO: Need Check.
         # coment format is  "\nComment\n"? or "Comment" ?
-        content += "%s" %( data['comment'] )
-        return content
+        content += "\n%s" %( data['comment'] )
+        return head %( len(content), content)
     
     @staticmethod
     def mkcommit(self):
@@ -217,6 +219,25 @@ class Commit:
             return '0'*40
         else:
             return open(refs, 'r').read().split('\n')[0]
+    @staticmethod
+    def write(workspace, sha1):
+        "Write current commit object sha1 to refs head"
+        HEAD = open(os.path.join(workspace, '.git', 'HEAD'), 'r').read().split('\n')[0]
+        path = os.path.join(workspace, '.git', os.path.split(HEAD.split(': ')[1])[0] )
+        refs = os.path.join(path, os.path.split(HEAD.split(': ')[1])[1])
+        if os.path.exists(path) == False:
+            os.makedirs(path)
+        print ":: refs %s" %(refs)
+        if os.path.isfile(refs) == True:
+            print ":: refs %s \n        sha1: %s" %( refs, sha1 )
+            return open(refs, 'w').write(sha1 + '\n')
+        else:
+            print ':: refs not file . ( %s )' %(refs)
+class Refs:
+    def __init__(self, workspace):
+        self.workspace = os.path.join(workspace, '.git', 'HEAD')
+    def read(self):
+        pass
 
 class Core:
     "Git Command"
@@ -255,9 +276,9 @@ class Core:
         # make commit object
         parent = Commit.parent(self.workspace)
         
-        commit_time = time.strftime("%s %z") # format: 1405913957 +0800
-        commit_author = " ".join( " ".join(self.author, "<%s>" %self.email), commit_time)
-        commit_committer = " ".join( " ".join(self.committer, "<%s>" %self.email), commit_time)
+        commit_time            = time.strftime("%s %z") # format: 1405913957 +0800
+        commit_author        = " ".join( [" ".join([self.author, "<%s>" % self.email]), commit_time] )
+        commit_committer = " ".join( [" ".join([self.committer, "<%s>" % self.email]), commit_time] )
         commit_dict = {
                         'tree':sha1,                           # current commit tree sha1 hash.
                         'parent':parent,                  # parent commit tree sha1 hash.
@@ -269,7 +290,11 @@ class Core:
         
         self.commit_tree = ""  # empty commit_tree buffer.
         # write commit object to file system.
-        return Object(self.workspace).write(utils.sha1(commit_content), commit_content)
+        commit_sha1 = utils.sha1(commit_content)
+        Object(self.workspace).write(commit_sha1, commit_content)
+        # write commit object sha1 to refs head
+        Commit.write(self.workspace, commit_sha1)
+
     def diff(path):
         "diff one blob file. ( diff tree ? IDK. )"
         """
@@ -327,7 +352,7 @@ class Core:
 class Object:
     "Object Directory Action"
     def __init__(self, workspace):
-        self.workspace = os.path.join(workspace, '.git')
+        self.workspace = os.path.join(workspace, '.git', 'objects')
     def read(self, sha1):
         "read object from object sha1 hash."
         path = os.path.join(self.workspace, sha1[:2], sha1[2:])
@@ -338,7 +363,7 @@ class Object:
     def write(self, sha1, content):
         "write object from object sha1 hash"
         path = os.path.join(self.workspace, sha1[:2] )
-        name = path + "/" + sha1[2:]
+        name = os.path.join(path, sha1[2:])
         if os.path.exists(path) == False:
             os.makedirs(path)
         return open(name, 'wb').write(utils.compress(content))
