@@ -98,9 +98,17 @@ def articles(request, title, sha):
     </div>
     """
     if content:
+        from docutils.core import publish_string,default_description
+        description = ('Generates (X)HTML documents from standalone reStructuredText '
+               'sources.  ' + default_description)
+        
         content = re.compile(r"^blob\s\d+\x00(.*?)$",re.DOTALL).findall(content)[0]
-        article = article %( str(title), str(content))
-        response = template %( article )
+        try:
+            response = publish_string(content, writer_name='html')
+        except:
+            response = "    @@不是正确的RST格式 :)) \n\n<br><br><hr>\n\n<br> <pre>%s</pre>" %( content)
+        #article = article %( str(title), str(content))
+        #response = template %( article )
     else:
         response = "你要查看的文章是: %s \n<br>\n 目前暂不支持查阅." %(name)
     return HttpResponse(response)
