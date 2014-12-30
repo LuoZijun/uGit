@@ -1,4 +1,4 @@
-UGit
+uGit
 ====
 
 Git Interface In Python
