@@ -1,16 +1,24 @@
 #!/usr/bin/env python
 #-*- coding:utf-8 -*-
 
-import os,sys,time
+import os, time, stat
 import hashlib,binascii,struct
-import zlib,re
-import stat,shutil
+import zlib, json
+# import shutil
+import sys
+
+reload(sys)
+sys.setdefaultencoding('utf8')
 
 class utils:
     "工具函数"
     @staticmethod
     def sha1(content):
         sha1 = hashlib.sha1()
+        try:
+            content = content.encode('utf8')
+        except:
+            pass
         sha1.update(content)
         return sha1.hexdigest()
     @staticmethod
@@ -26,34 +34,22 @@ class utils:
         return binascii.b2a_hex(sha1)
     @staticmethod
     def compress(content):
+        try:
+            content = content.encode('utf8')
+        except:
+            pass
         return zlib.compress(content)
     @staticmethod
     def decompress(content):
         return zlib.decompress(content)
     @staticmethod
-    def read(path):
-        return open(path, 'r').read()
-    
-    @staticmethod
-    def write(path, content, mode=100644):
-        path = os.path.dirname(path)
-        if path and not os.path.exists(path):
-            os.makedirs(path)
-        open(path, 'w').write(content)
-        os.chmod(path, mode)
-        return True
-
-    @staticmethod
     def pmode(mode):
-        "解析八进制文件权限( GIT使用八进制来描述权限 )"
         return int(mode, 8)
     @staticmethod
     def fmode(mode):
-        "转换十进制权限至八进制"
         return int(oct(mode))
     @staticmethod
     def gmode(path):
-        "读取系统文件权限"
         mode = os.stat(path).st_mode
         if stat.S_ISLNK(mode):
             "Linux Link"
@@ -68,542 +64,422 @@ class utils:
             "Do Not Support"
             raise AssertionError("File Mode (Int: %d) Not Support !" % mode )
 
-class Blob:
-    #"Blob Object"
-    def __init__(self):
-        pass
-    @staticmethod
-    def decode(data):
-        "unpack blob object"
-        if data[:4] != 'blob':
-            raise AssertionError("无效的文件对象: %r" % data[:4])
-        content = data[5:]
-        size = re.compile(r"(\d+)\x00",re.DOTALL).findall(content)[0]
-        return content[len(str(size))+1:]
-    @staticmethod
-    def encode(data):
-        "pack blob object"
-        header = "blob %d\x00" % len(data)          # type(space)size(null byte)
-        content = header + data
-        #sha1       = utils.sha1(content)
-        #return {'content':content, 'sha1':sha1}         # 需要 转换二进制 binascii.a2b_hex
-        return content
-    @staticmethod
-    def write(workspace, content, sha1=None):
-        "write blob object to file system"
-        if sha1 == None:
-            sha1 = utils.sha1(content)
-        
 
-class Tree:
-    "Tree Object"
-    """
-    OBJECT_MODE = { 
-        100644:'blob', 
-        100755:'blob', 
-        40000:'tree',                             # 040000
-        160000:'commit', 
-        120000:'blob',                          # blob 对象的符号链接
-    }
-    """
+class Git:
+    workspace = ""
+    email     = "example@example.com"
+    name      = "example"
+    stash     = {}
 
-    @staticmethod
-    def decode(data):
-        "unpack object tree"
-        if data[:4] != 'tree':
-            raise AssertionError("无效的树对象: %r" % data[:4])
-        size = int(data.split('\x00')[0][5:])
-        content = data[6+len(str(size)):]
-        # SHA哈希长度为 20 个比特(二进制), 40个字节(十六进制) MODE 长度 5 - 6 位
-        tlist = re.compile(r"(\d{5,6})\s(\S+)\x00(.{20})",re.DOTALL).findall(content)
-        tree = ''
-        for t in tlist:
-            t = list(t)
-            if int(t[0]) == 40000:
-                t[0] = '040000'
-            t[2] = utils.bin2hex(t[2])
-            tree += '\t'.join(t) + '\n'
-        return tree
-    @staticmethod
-    def encode(data):
-        "pack object tree"
-        header = "tree %d\x00%s"
-        content = ""
-        for tree in data.split('\n'):
-            if len(tree) != 0:
-                t = tree.split('\t')
-                mode = int(t[0])
-                path = t[1]
-                sha1 = utils.hex2bin( t[2] )
-                content += "%d %s\x00%s" %( mode, path, sha1 )
-        return header %( len(content), content )
-    @staticmethod
-    def mktree(mode, path, sha1):
-        "make tree object"
-        return '\t'.join( [str(int(mode)), str(path), str(sha1)] )
-    @staticmethod
-    def maketree(tlist):
-        "make tree object from object list"
-        tree = []
-        for  t in tlist:
-            "struct  [mode, path, sha1]"
-            tree.append( '\t'.join( t ) )
-        return '\n'.join( tree )
-
-
-class Commit:
-    "Commit Object"
-    @staticmethod
-    def decode(data):
-        "unpack commit object data"
-        #content = re.compile(r"commit\s\d+\x00(tree\s\S+)\n",re.DOTALL).findall(data)[0]
-        content = re.compile(r"commit\s\d+\x00(.*?\n)$",re.DOTALL).findall(data)[0]
-        
-        content.reverse()
-        lines = content.split('\n')
-        
-        commit = {'comment':[] }
-        while True:
-            if len(lines) == 0:
-                break
-            line = lines.pop()
-            stage = line.split(' ')
-            if stage[0] in ['tree','parent']:
-                commit[stage[0]] = stage[1]
-            elif stage[0] in ['author','committer']:
-                """
-                name = stage[1:][0]
-                email = stage[1:][1]
-                timestamp   = stage[1:][2:][0]
-                timezone = stage[1:][2:][1]
-                # ['luo', '<luo@freeweapon.org>', '1405847288', '+0800']
-                """
-                commit[stage[0]] = stage[1:]
-            else:
-                commit['comment'].append(line)
-        commit['comment'] = '\n'.join( commit['comment'] )
-        return commit
-    @staticmethod
-    def encode(data):
-        "pack commit object data"
-        # tree, parent, author, committer, comment
-        head = "commit %d\x00%s"
-        content = ""
-        content += "tree %s\nparent %s\n" %( data['tree'], data['parent'] )
-        #content += "author %s\n" %( ' '.join(data['author']) )
-        content += "author %s\n" %( data['author'] )
-        #content += "committer %s\n" %( ' '.join(data['committer']) )
-        content += "committer %s\n" %( data['committer'] )
-        #content += "committer %s\n" %( ' '.join(data['committer']) )
-        # TODO: Need Check.
-        # coment format is  "\nComment\n"? or "Comment" ?
-        content += "\n%s" %( data['comment'] )
-        return head %( len(content), content)
-    
-    @staticmethod
-    def mkcommit(self):
-        "make commit object"
-        pass
-    @staticmethod
-    def mkcomment():
-        "make comment text"
-        pass
-    @staticmethod
-    def parent(workspace):
-        "Last Commit Object"
-        HEAD = open(os.path.join(workspace, '.git', 'HEAD'), 'r').read().split('\n')[0]
-        path = os.path.join(workspace, '.git', os.path.split(HEAD.split(': ')[1])[0] )
-        refs = os.path.join(path, os.path.split(HEAD.split(': ')[1])[1])
-        if os.path.exists(path) == False:
-            os.makedirs(path)
-        if os.path.isfile(refs) == False:
-            open(refs, 'w').write('0'*40 + '\n')
-            return '0'*40
-        else:
-            return open(refs, 'r').read().split('\n')[0]
-    @staticmethod
-    def write(workspace, sha1):
-        "Write current commit object sha1 to refs head"
-        HEAD = open(os.path.join(workspace, '.git', 'HEAD'), 'r').read().split('\n')[0]
-        path = os.path.join(workspace, '.git', os.path.split(HEAD.split(': ')[1])[0] )
-        refs = os.path.join(path, os.path.split(HEAD.split(': ')[1])[1])
-        if os.path.exists(path) == False:
-            os.makedirs(path)
-        if os.path.isfile(refs) == True:
-            return open(refs, 'w').write(sha1 + '\n')
-
-class Refs:
-    def __init__(self, workspace):
-        self.workspace = os.path.join(workspace, '.git', 'HEAD')
-    def read(self):
-        pass
-
-class Core:
-    "Git Command"
-    __path__      = os.path.dirname(os.path.abspath(__file__))
-    __version__ = '0.1'
-    def __init__(self,workspace=None, author=None, committer=None, email=None, sync=False):
+    def __init__(self, workspace="", email="example@example.com", name="example"):
         self.workspace = workspace
-        self.author = author
-        self.committer = committer
-        self.email = email
-        self.sync = sync           # 是否同步对象至工作目录 ( not git root )
-        
-        self.commit_tree = ''
+        self.email     = email
+        self.name      = name
+        self.committer = "%s <%s>" % (self.name, self.email)
+        print workspace
+        assert os.path.exists(self.workspace) #u"目录 \'%s\'不存在。" % self.workspace
+        assert os.path.isdir(self.workspace)  #u"路径 \'%s\' 不是有效的目录。" % self.workspace
 
-    def init(self):
-        "初始化仓库"
-        return shutil.copytree( self.__path__ + '/template/git', os.path.join(self.workspace,'.git') )
-    def create(self):
-        "创建仓库"
-        os.makedirs( os.path.join(self.workspace,'.git') )
-        return shutil.copytree( self.__path__ + '/template/git', os.path.join(self.workspace,'.git'))
+    def init(self, workspace=None, description=u"Unnamed repository; edit this file 'description' to name the repository."):
+        # template       = os.path.join(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'template'), 'git')
+        root = os.path.join(self.workspace,'.git')
+        assert (os.path.exists(root) == False) #u"警告： 检测到该目录 \'%s\' 是一个已存在的Git仓库。" % self.workspace
+
+        config = """
+            [core]
+            repositoryformatversion = 0
+            filemode = true
+            bare = false
+            logallrefupdates = true
+        """
+        os.makedirs( root )
+
+        open( os.path.join(root, 'config'), 'w' ).write(config.encode("utf8"))
+        open( os.path.join(root, 'HEAD'), 'w' ).write("ref: refs/heads/master".encode("utf8"))
+        open( os.path.join(root, 'description'), 'w' ).write(description.encode("utf8"))
+
+        os.makedirs( os.path.join(root,'hooks') )
+        os.makedirs( os.path.join(root,'objects') )
+        os.makedirs( os.path.join(root,'branches') )
+        # os.makedirs( os.path.join(root,'logs') )
+        # os.makedirs( os.path.join(root,'info') )
+
+        refs = os.path.join(os.path.join(root,'refs'), 'heads')
+        os.makedirs( refs )
+        # default commit tree hash: 0000000000000000000000000000000000000000
+        open( os.path.join(refs, 'master'), 'w' ).write("0"*40+"\n")
+        # return shutil.copytree(template, os.path.join(self.workspace,'.git') )
+
     def add(self, path, content, mode=100644):
-        "增加文件至提交事务当中"
-        sha1 = utils.sha1(content)
-        Object(self.workspace).write(sha1, Blob.encode(content) )
-        self.commit_tree += Tree.mktree(mode, path, sha1) + "\n"
-    def rm(self, path):
-        "删除操作"
-        # TODO: 从 commit tree 删除 path .
-        pass
-    def commit(self, comment='default commit message'):
-        "向仓库提交操作"
-        tree = Tree.encode(self.tree() + self.commit_tree)
-        sha1 = utils.sha1(tree)    # now commit tree sha1
-        Object(self.workspace).write(sha1, tree)
-        # make commit object
-        parent = Commit.parent(self.workspace)
+        sha1    = utils.sha1(content)
         
-        commit_time            = time.strftime("%s %z") # format: 1405913957 +0800
-        commit_author        = " ".join( [" ".join([self.author, "<%s>" % self.email]), commit_time] )
-        commit_committer = " ".join( [" ".join([self.committer, "<%s>" % self.email]), commit_time] )
-        commit_dict = {
-                        'tree':sha1,                           # current commit tree sha1 hash.
-                        'parent':parent,                  # parent commit tree sha1 hash.
-                        'author':commit_author,  # format: MyName <MyEmail@email.net>.
-                        'committer':commit_committer,  # like  commit_author.
-                        'comment':comment                        # normal.
-                        }
-        commit_content = Commit.encode(commit_dict)
-        
-        self.commit_tree = ""  # empty commit_tree buffer.
-        # write commit object to file system.
-        commit_sha1 = utils.sha1(commit_content)
-        Object(self.workspace).write(commit_sha1, commit_content)
-        # write commit object sha1 to refs head
-        return Commit.write(self.workspace, commit_sha1)
-    def tree(self):
-        "fetch tree list"
-        commit_content = Object(self.workspace).read( Commit.parent(self.workspace) )
-        tree_sha1 = re.compile(r"\d+\x00tree\s(\S+)\n",re.DOTALL).findall(commit_content)[0]
-        tree_content = Object(self.workspace).read( tree_sha1 )
-        return Tree.decode(tree_content)
-    def blob(self, sha1):
-        "fetch blob object content by blob sha1"
-        try:
-            return Object(self.workspace).read( sha1 )
-        except:
-            return False
-    def diff(self, path):
-        "diff one blob file. ( diff tree ? IDK. )"
-        """
-    unified_diff(a, b, fromfile='', tofile='', fromfiledate='', tofiledate='', n=3, lineterm='\n')
-    Compare two sequences of lines; generate the delta as a unified diff.
-    
-    Unified diffs are a compact way of showing line changes and a few
-    lines of context.  The number of context lines is set by 'n' which
-    defaults to three.
-    
-    By default, the diff control lines (those with ---, +++, or @@) are
-    created with a trailing newline.  This is helpful so that inputs
-    created from file.readlines() result in diffs that are suitable for
-    file.writelines() since both the inputs and outputs have trailing
-    newlines.
-    
-    For inputs that do not have trailing newlines, set the lineterm
-    argument to "" so that the output will be uniformly newline free.
-    
-    The unidiff format normally has a header for filenames and modification
-    times.  Any or all of these may be specified using strings for
-    'fromfile', 'tofile', 'fromfiledate', and 'tofiledate'.
-    The modification times are normally expressed in the ISO 8601 format.
-    
-    Example:
-    
-    >>> for line in unified_diff('one two three four'.split(),
-    ...             'zero one tree four'.split(), 'Original', 'Current',
-    ...             '2005-01-26 23:30:50', '2010-04-02 10:20:52',
-    ...             lineterm=''):
-    ...     print line                  # doctest: +NORMALIZE_WHITESPACE
-    --- Original        2005-01-26 23:30:50
-    +++ Current         2010-04-02 10:20:52
-    @@ -1,4 +1,4 @@
-    +zero
-     one
-    -two
-    -three
-    +tree
-     four
+        # OBJECT_MODE = { 
+        #     100644:'blob', 
+        #     100755:'blob', 
+        #     040000:'tree',      # 040000
+        #     160000:'commit', 
+        #     120000:'blob',      # blob 对象的符号链接
+        # }
+        self.stash[path] = {
+            "mode": mode, 
+            "path": path, 
+            "sha1": sha1, 
+            "content": content
+        }
+    def _fetch_object(self, sha1):
+        path    = os.path.join(self.workspace, ".git", "objects", sha1[:2], sha1[2:] )
+        assert (os.path.exists(path) and os.path.isfile(path) )
+        return utils.decompress(open(path, "r").read())
 
-        """
-        pass
+    def _write_object(self, sha1, content):
+        # ".git/objects/9c/d13d64f479e0126471b5326ae2c9d1b6037c94"
+        root    = os.path.join(self.workspace, ".git", "objects", sha1[:2] )
+        filename= os.path.join(root, sha1[2:])
+        if not os.path.exists(root):
+            os.makedirs(root)
+        if not os.path.isdir(root):
+            os.remove(root)
+            os.makedirs(root)
+        if os.path.exists(filename):
+            return True
 
-    def log(path):
-        "查看日志"
-        pass
+        open(filename, 'wb').write(utils.compress(content))
+        return True
+    def _fecth_last_commit_hash(self):
+        head_file = os.path.join(self.workspace, '.git', 'HEAD')
+        assert (os.path.exists(head_file) and os.path.isfile(head_file) )
+        HEAD = open(head_file, 'r').read().split('\n')[0]
+        path = os.path.join(self.workspace, '.git', os.path.split(HEAD.split(': ')[1])[0] )
+        assert (os.path.exists(path) and os.path.isdir(path) )
 
-    def status(path):
-        "查看状态"
-        pass
-
-
-
-class Object:
-    "Object Directory Action"
-    def __init__(self, workspace):
-        self.workspace = os.path.join(workspace, '.git', 'objects')
-    def read(self, sha1):
-        "read object from object sha1 hash."
-        path = os.path.join(self.workspace, sha1[:2], sha1[2:])
-        if os.path.exists(path) and os.path.isfile(path):
-            return utils.decompress(open(path, 'rb').read())
+        ref  = os.path.join(path, os.path.split(HEAD.split(': ')[1])[1])
+        if not os.path.exists(ref):
+            open(ref, "w").write('0'*40 + '\n')
+        if not os.path.isfile(ref):
+            raise ValueError(u'Git 结构已损坏 ...')
         else:
-            raise AssertionError("object path not exists.")
-    def write(self, sha1, content):
-        "write object from object sha1 hash"
-        path = os.path.join(self.workspace, sha1[:2] )
-        name = os.path.join(path, sha1[2:])
-        if os.path.exists(path) == False:
-            os.makedirs(path)
-        return open(name, 'wb').write(utils.compress(content))
+            sha1 = open(ref, 'r').read().split('\n')[0]
 
-class Shorcut:
-    "some command"
-    @staticmethod
-    def test():
-        "Test Command."
-        pass
+        assert len(sha1) == 40
+        return sha1
+    def _update_last_commit_hash(self, sha1):
+        head_file = os.path.join(self.workspace, '.git', 'HEAD')
+        assert (os.path.exists(head_file) and os.path.isfile(head_file) )
+        HEAD = open(head_file, 'r').read().split('\n')[0]
+        path = os.path.join(self.workspace, '.git', HEAD.split(': ')[1] )
+        assert (os.path.exists(path) and os.path.isfile(path) )
+        sha1 = open(path, 'w').write(sha1+"\n")
+        return sha1
+    def _parse_commit(self, sha1):
+        """
+            Commit Object:
+                commit 194\x00
+                tree 8805caff2d459b57bc4c08cfdcbe848fd8ab6621\n
+                parent 85760890364e7dbc04aceef112cd01dd27827328\n
+                author Luo <gnulinux@126.com> 1461727165 +0800\n
+                committer Luo <gnulinux@126.com> 1461727165 +0800\n
+                \n7\n'
+        """
+        data = self._fetch_object(sha1)
+        assert data[0:7] == "commit "
+        data = data[7:]
+        size = ""
+        while True:
+            char = data[0:1]
+            data = data[1:]
+            if char == '\x00':
+                break
+            size += char
+        size = int(size)
+        data = data[0:size]
+        data = data.split("\n")
+
+        commit  = {}
+        for n in range(4):
+            tmp = data[0].split(" ")
+            key = tmp[0]
+            del tmp[0]
+            value = " ".join(tmp)
+            commit[key] = value
+            del data[0]
+
+        commit['comment'] = "\n".join(data)
+        """
+            {
+                'comment': '\n7\n', 
+                'committer': 'Luo <gnulinux@126.com> 1461727165 +0800', 
+                'tree': '8805caff2d459b57bc4c08cfdcbe848fd8ab6621', 
+                'parent': '85760890364e7dbc04aceef112cd01dd27827328', 
+                'author': 'Luo <gnulinux@126.com> 1461727165 +0800'
+            }
+        """
+        return commit
+    def _parse_tree(self, sha1):
+        data = self._fetch_object(sha1)
+        """
+            tree 123\x00
+            40000 dir\x00\xf9f\x95-~\x07\x15h>\xe95\xd2\x01\xcdJ\xb2'6\xc81
+            100644 h\x00\x9c\xd1=d\xf4y\xe0\x12dq\xb52j\xe2\xc9\xd1\xb6\x03|\x94
+            100644 test.py\x00;vTC\xd9\xda\xafN\xbb\xa6\xd6\xe6\x94qu\xaf\xd7\xe5\x87\xaf
+            100644 w\x00\xe6\x9d\xe2\x9b\xb2\xd1\xd6CK\x8b)\xaewZ\xd8\xc2\xe4\x8cS\x91
+        """
+        assert data[0:5] == "tree "
+        data = data[5:]
+        size = ""
+        while True:
+            char = data[0:1]
+            data = data[1:]
+            if char == '\x00':
+                break
+            size += char
+        size = int(size)
+        data = data[0:size]
+        data = data.split("\n")
+
+        def read(d):
+            prefix   = ""
+            while True:
+                char = d[0:1]
+                d    = d[1:]
+                if char == '\x00':
+                    break
+                prefix += char
+            tmp    = prefix.split(" ")
+            record = {
+                "mode": int(tmp[0]),
+                "path": tmp[1],
+                "sha1": binascii.b2a_hex(d[0:20])
+            }
+            d      = d[20:]
+            return (record, d)
+
+        tree = {}
+        while True:
+            record, d = read(data)
+            tree[record['path']] = record
+            if d == 0:break
+            data = d
+        """
+            [
+                {'path': 'dir', 'sha1': 'f966952d7e0715683ee935d201cd4ab22736c831', 'mode': 40000}, 
+                {'path': 'h', 'sha1': '9cd13d64f479e0126471b5326ae2c9d1b6037c94', 'mode': 100644}, 
+                {'path': 'test.py', 'sha1': '3b765443d9daaf4ebba6d6e6947175afd7e587af', 'mode': 100644}, 
+                {'path': 'w', 'sha1': 'e69de29bb2d1d6434b8b29ae775ad8c2e48c5391', 'mode': 100644}
+            ]
+        """
+        return tree
+
+    def _fetch_tree_hash_by_commit_hash(self, sha1=None):
+        if sha1 == None:
+            sha1 = self._fecth_last_commit_hash()
+        commit    = self._parse_commit(sha1)
+        tree_hash = commit['tree']
+        return tree_hash
+    def commit(self, comment=u'default commit message'):
+        # fetch last commit tree
+        parent = self._fecth_last_commit_hash()
+        if parent != '0'*40:
+            tree   = self._parse_tree(self._fetch_tree_hash_by_commit_hash(sha1=parent))
+            tree   += self.stash
+        else:
+            tree  = self.stash
+
+        # Make Tree Object
+        records     = ""
+        for p in tree:
+            blob_elem  = tree[p]
+            if "content" in blob_elem:
+                # write blob object
+                blob       = "blob %d\x00%s" % (len(blob_elem['content']), blob_elem['content'])
+                self._write_object(blob_elem['sha1'], blob)
+            record  = "%d %s\x00%s" % (blob_elem['mode'], blob_elem['path'], utils.hex2bin(blob_elem['sha1']) )
+            records += record
+        # new tree
+        tree        = "tree %d\x00%s" % (len(records), records)
+        # write tree
+        tree_sha1   = utils.sha1(tree)
+        self._write_object(tree_sha1, tree)
+
+        # make commit object
+        ntime       = time.strftime("%s %z") # format: 1405913957 +0800
+        commit = {
+            "parent": parent,
+            "tree"  : tree_sha1,
+            "author": "%s <%s> %s" %(self.name, self.email, ntime),
+            "committer": "%s <%s> %s" %(self.name, self.email, ntime),
+            "comment"  : comment
+        }
+        content = "tree %s\nparent %s\nauthor %s\ncommitter %s\n%s\n" % (\
+            commit['tree'], \
+            commit['parent'],\
+            commit['author'],\
+            commit['committer'],\
+            commit['comment']\
+        )
+        """
+            commit 194\x00
+            tree 8805caff2d459b57bc4c08cfdcbe848fd8ab6621\n
+            parent 85760890364e7dbc04aceef112cd01dd27827328\n
+            author Luo <gnulinux@126.com> 1461727165 +0800\n
+            committer Luo <gnulinux@126.com> 1461727165 +0800\n
+        """
+        commit = "commit %d\x00%s" %(len(content), content)
+        # write commit object
+        commit_sha1 = utils.sha1(commit)
+        self._write_object(commit_sha1, commit)
+        self._update_last_commit_hash(commit_sha1)
+        return commit_sha1
+
+
 
 class Index:
-    #WARNING: 索引(index)对象功能并不是一个必需功能
+    """Git Directory Cache(DIRC, Dircache)
+    https://github.com/git/git/blob/master/Documentation/technical/index-format.txt
     """
-        Git 索引在一些旧文档里面也被称作目录缓存(DIRC, directory cache)
-        Git 索引的作用仅在于实现 对索引生成的树对象 和 工作树 进行快速比较
-        DOC: https://raw.githubusercontent.com/git/git/master/Documentation/technical/index-format.txt
-        DOC: https://github.com/git/git/blob/master/Documentation/technical/api-in-core-index.txt
-        
-    """
-    def __init__(self):
-        pass
     @staticmethod
-    def decode(data):
-        "Unpack Index(Git Directory Cache, DIRC ) Object."
-        """
-        https://github.com/git/git/blob/master/Documentation/technical/index-format.txt
-        Dircache
-        """
-        """
-        print repr(data)
-        print ''
-        print ''
-        """
-        if data[:4] != 'DIRC':
-            raise AssertionError("无效的 Dircache 文件头: %r" % data[:4])
-        header = data[4:12]
-        version,num_entries = struct.unpack(">LL",header[:8])
-        assert version in (1, 2)  # availbe version are 2, 3 and 4.
-        
-        entries = {}
-        content = data[12:]
-        begin = 0
-        for i in range(num_entries):
-            try:
-                icontent = content[begin:]
-                # unpack
-                ctime = struct.unpack('>LL', icontent[:8] )
-                mtime = struct.unpack('>LL', icontent[8:16] )
-                
-                info = icontent[16:16+46]
-                (dev, ino, mode, uid, gid, size, sha1, flags, ) = struct.unpack(">LLLLLL20sH", info)
-                name = icontent[16+46:16+46+int(flags)]
-                entries[name] = {    'ctime':ctime, 'mtime':mtime, 'dev':dev, 'ino':ino, \
-                                                    'uid':uid, 'gid':gid, 'size':size, 'sha1':utils.bin2hex(sha1), 'flags':flags,\
-                                                }
-                
-                real_size = 16+46+int(flags)+8
-                #print ''
-                #print repr(icontent[real_size:])
-                begin += real_size
-            except:
-                pass
-            #print repr(real_size)
-            """
-            timestamp = content[i*16:16]  # ctime and mtime (8 , 8)
-            #(dev, ino, mode, uid, gid, size, sha1, flags, ) = content[(i+1)*16:46] # 4 * 6 + 20 + 2  = 46
-            info = content[(i+1)*16:46]
-            (dev, ino, mode, uid, gid, size, sha1, flags, ) = struct.unpack(">LLLLLL20sH", info)
-            name = content[-2:]
-            """
+    def decode(path):
+        f = open(path, 'r')
+        # 4-byte signature, b"DIRC"
+        signature = f.read(4)
+        # 4-byte version number, 4-byte number of index entries
+        version, entrieslen   = struct.unpack(">LL", f.read(8))
+        entries               = []
+        for n in range(entrieslen):
+            entry = {}
+            # 4-bit object type, 3-bit unused, 9-bit unix permission
+            (ctime, ctime_nanosecond, mtime, mtime_nanosecond, dev, ino, mode, uid, gid, size, ) = struct.unpack(">LLLLLLLLLL", f.read(40))
+            entry['ctime'] = ctime + ctime_nanosecond / 1000000000
+            entry['mtime'] = mtime + mtime_nanosecond / 1000000000
+            entry['dev']   = dev
+            entry['ino']   = ino
+            entry['mode']  = mode
+            entry['uid']   = uid
+            entry['gid']   = gid
+            entry['size']  = size
+            entry['sha1']  = binascii.b2a_hex(struct.unpack(">20s", f.read(20))[0])
+            entry['flags'] = struct.unpack(">H", f.read(2))[0]
 
-        for x in entries:
-            print "\n"*3
-            print repr(x)
-            print entries[x]
-            
-        """
-        while count < num_entries:
-            struct.unpack(">L", data[(12+32*num):4] )[0]
-            for num in range(1,num_entries+1):
-                entries_sha = binascii.b2a_hex(data[(12+32*num):32])
-                print entries_sha
-        """
-    @staticmethod
-    def encode(data):
-        "Pack Index(Git Directory Cache, DIRC ) Object."
-        pass
-    @staticmethod
-    def checksum():
-        pass
+            # 1-bit assume-valid
+            entry["assume-valid"] = bool(entry["flags"] & (0b10000000 << 8))
+            # 1-bit extended, must be 0 in version 2
+            entry["extended"] = bool(entry["flags"] & (0b01000000 << 8))
+            # 2-bit stage (?)
+            entry["stage"] = (bool(entry["flags"] & (0b00100000 << 8)), bool(entry["flags"] & (0b00010000 << 8)))
+            # 12-bit name length, if the length is less than 0xFFF (else, 0xFFF)
+            namelen = entry["flags"] & 0xFFF
 
+            # 62 bytes so far
+            entrylen = 62
 
-"""
+            if entry["extended"] and (version == 3):
+                entry["extra-flags"] = struct.unpack(">H", f.read(2))[0]
+                # 1-bit reserved
+                entry["reserved"] = bool(entry["extra-flags"] & (0b10000000 << 8))
+                # 1-bit skip-worktree
+                entry["skip-worktree"] = bool(entry["extra-flags"] & (0b01000000 << 8))
+                # 1-bit intent-to-add
+                entry["intent-to-add"] = bool(entry["extra-flags"] & (0b00100000 << 8))
+                # 13-bits unused
+                # used = entry["extra-flags"] & (0b11100000 << 8)
+                if not used:
+                    raise ValueError(u"Expected unused bits in extra-flags")
+                entrylen += 2
 
-    Old Code.
+            if namelen < 0xFFF:
+                entry["name"] = f.read(namelen).decode("utf-8", "replace")
+                entrylen += namelen
+            else:
+                # Do it the hard way
+                name = []
+                while True:
+                    byte = f.read(1)
+                    if byte == "\x00":
+                        break
+                    name.append(byte)
+                entry["name"] = b"".join(name).decode("utf-8", "replace")
+                entrylen += 1
+            padlen = (8 - (entrylen % 8)) or 8
+            nuls = f.read(padlen)
+            if set(nuls) == {0}:
+                raise ValueError(u"padding contained non-NUL")
 
-"""
-class Commit_old:
-    """
-        Git提交对象(commit object)
-    """
-    def __init__(self, path, blob):
-        self.workspace = './blog/.git'
-        self.commit_path = path
-        self.commit_blob = blob
-        tree = self.read_tree()
-        path_list = self.path_list(tree)
-        if self.commit_path in path_list:
-            # 修改
-            self.modify()
-        else:
-            # 新增
-            commit_hash = self.add(tree)
-            # 记录日志
-            parent_hash = self.last_commit_hash
-            self.record(parent_hash, commit_hash)
-            
-    def read_tree(self):
-        "read last write tree."
-        last_commit_hash = open(self.workspace + '/refs/heads/master').read().replace('\n','')
-        self.last_commit_hash = last_commit_hash
-        last_commit_obj = GitIO().read(last_commit_hash)
-        """
-        commit 153\x00tree 5d9efd9cf5ab7b8b5b5dc674a0e00b4f3a8f59a5\nauthor luo <luo@freeweapon.org> 1406727213 +0800\ncommitter luo <luo@freeweapon.org> 1406727213 +0800\n\ninit\n
-        """
-        tree_hash = re.compile(r"commit\s\d+\x00tree\s(\S+)\n",re.DOTALL).findall(last_commit_obj)[0]
-        tree_obj = GitIO().read(tree_hash)
-        return GitTree().unpack(tree_obj)
-    def path_list(self, tree):
-        l = []
-        for x in tree:
-            l.append(x['path'])
-        return l
-    def modify(self):
-        "修改对象"
-        pass
-        
-    def add(self,tree):
-        "新增对象"
-        b_obj = GitBlob().pack(self.commit_blob)
-        #写入对象
-        GitIO().write(b_obj['sha'], b_obj['content'])
-        tree.append( {'path':self.commit_path, 'type':'blob', 'mode':'100644', 'sha':b_obj['sha']} )
-        tree = GitTree().pack(tree)
-        # 写入 树对象
-        tree_hash = hashlib.sha1(tree).hexdigest()
-        GitIO().write(tree_hash, tree)
-        
-        sha = self.mk_commit_obj(tree_hash)
-        # 替换 refs/heads/master
-        open(self.workspace + '/refs/heads/master', 'w').write(sha+'\n')
-        return sha
-    def mk_commit_obj(self,sha):
-        "生成 commit 对象"
-        commit_date = time.strftime("%s %z")         # 格式 '1405913957 +0800'
-        commit_info = "author luo <luo@freeweapon.org> %s\ncommitter luo <luo@freeweapon.org> %s\n\ncommit message\n" %(commit_date,commit_date)
-        obj = "tree %s\n%s" %( sha, commit_info)
-        obj = "commit %d\x00%s" %(len(obj), obj)
-        commit_hash = hashlib.sha1(obj).hexdigest()
-        GitIO().write(commit_hash, obj)
-        # TODO: 生成 git log. ( git log 需要该文件 )
-        return commit_hash
+            entries.append(entry)
 
-    def record(self, p_sha, c_sha):
-        "add one record"
-        committer_name = 'luo'                               # 提交人名称
-        committer_email = 'luo@freeweapon.org'               # 提交人电邮
-        parent_hash = p_sha                                           # 上次提交对象散列值
-        commit_hash = c_sha                                         # 当前提交对象散列值
-        
-        commit_time = time.strftime("%s %z")         # 格式 '1405913957 +0800'
-        comment = "commit message(log)"                      # 提交描述
-        # in first commit parent_hash="0"*40
-        record = [ parent_hash, commit_hash, committer_name, \
-                            '<%s>' %committer_email , commit_time ]
-        record = ' '.join(record)
-        # 首次提交 commit (initial):  , 其它: commit: 
-        record += "\tcommit: %s\n" % comment
+        indexlen  = os.fstat(f.fileno()).st_size
+        extnumber = 1
 
-        log1 = self.workspace + "/logs/HEAD"
-        log2 = self.workspace + "/logs/refs/heads/master"
-        open(log1,'a').write(record)
-        open(log2,'a').write(record)
-        return True
+        extensions= []
+        while f.tell() < (indexlen - 20):
+            extension = {}
+            extension["extension"] = extnumber
+            extension["signature"] = f.read(4).decode("ascii")
+            extension["size"]      = struct.unpack(">L", f.read(4) )[0]
+
+            # Seems to exclude the above:
+            # "src_offset += 8; src_offset += extsize;"
+            extension["data"] = json.dumps(f.read(extension["size"]).decode("iso-8859-1"))
+            extnumber += 1
+
+            extensions.append(extension)
+
+        checksum = {}
+        checksum["checksum"] = True
+        checksum["sha1"] = binascii.b2a_hex(struct.unpack(">20s", f.read(20))[0])
+
+        f.close()
+
+        result = { "entries": entries, "extensions": extensions, "checksum": checksum }
+
+        return result
 
 
-
+class Head:
+    pass
+class Refs:
+    pass
 class Tag:
-    #WARNING: 因为标签对象功能并不是一个必需功能
-    #                       所以暂时不打算实现该功能的打算
-    #                       标签对象一般用在 分支/提交对象的引用/签名 上
-    #                       DOC: https://github.com/git/git/blob/master/Documentation/git-mktag.txt
-    def __init__(self):
-        "标签对象"
-        pass
-
-
-                
+    # https://github.com/git/git/blob/master/Documentation/git-mktag.txt
+    pass
 class Pack:
-    #WARNING: 因为pack对象功能并不是一个必需功能
-    #                       所以暂时不打算实现该功能的打算
-    #                       DOC: https://github.com/git/git/blob/master/Documentation/technical/pack-format.txt
-    #                                  https://github.com/git/git/blob/master/Documentation/technical/pack-protocol.txt
-    def __init__(self):
-        pass
+    # https://github.com/git/git/blob/master/Documentation/technical/pack-format.txt
+    # https://github.com/git/git/blob/master/Documentation/technical/pack-protocol.txt
+    pass
+class Log:
+    pass
 
 
-class IO:
-    "Git Object Read/Write"
-    def __init__(self,workspace =  None):
-        if workspace == None:
-            self.workspace = './blog/.git'
+
+# Test
+def test_ls_files(git_work_tree):
+    data   = open(os.path.join(git_work_tree, '.git', 'index') ,'r').read()
+    data   = utils.decompress(data)
+    result = Index.decode(data)
+    for k in result.keys():
+        print k
+        if type(result[k]) != list:
+            print result[k]
         else:
-            self.workspace = workspace
-    def read(self,sha):
-        path = self.workspace + '/objects/' + sha[:2] + '/'
-        name = sha[2:]
-        return zlib.decompress(open(path+name,'r').read())
-    def write(self,sha,data):
-        path = self.workspace + '/objects/' + sha[:2] + '/'
-        name = sha[2:]
-        if os.path.exists(path) == False:
-            os.makedirs( path )
-        return open(path+name,'w').write(zlib.compress(data))
+            for elem in result[k]:
+                print elem
+def test_create_git_repo(path):
+    git = Git(workspace=path, email="test@test.com", name="测试")
+    git.init()
+
+def test_commit(path):
+    git = Git(workspace=path, email="test@test.com", name="测试")
+    git.add(path="README.rst", content="测试添加文件(rst)。")
+    git.add(path="README.md", content="测试添加文件(md)。")
+    print git.commit(comment="init ...")
+
+def test():
+    path = os.path.join(os.getcwd(), 'test_repo')
+    test_create_git_repo(path)
+    test_commit(path)
+    test_ls_files(path)
 
 if __name__ == '__main__':
-    data = open('index','rb').read()
-    #data = utils.decompress(data)
-    Index.decode(data)
+    test()
+    
 
 
 
